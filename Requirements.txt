@@ -1,0 +1,7 @@
+# requirements.txt
+
+pyaudio
+requests
+opencv-python-headless
+numpy
+Pillow
