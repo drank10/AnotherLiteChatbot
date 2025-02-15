@@ -10,7 +10,7 @@ This is a Light AI chatbot interface designed to handle various text-to-speech (
 ## Requirements
 - Python 3.x
 - LM Studio or Ollama hosting the LLM
-- Whisper-cli.exe in project folder - https://github.com/ggerganov/whisper.cpp/releases/tag/v1.7.4
+- Whisper-cli.exe in project folder - https://github.com/ggerganov/whisper.cpp/actions/runs/13173996633
 - Piper.exe in project folder - https://github.com/rhasspy/piper/releases/tag/2023.11.14-2
 - Other dependencies listed in `requirements.txt`
 
