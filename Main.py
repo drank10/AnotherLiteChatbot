@@ -1,0 +1,364 @@
+import os
+import wave
+import pyaudio
+import requests
+from subprocess import Popen, PIPE
+import json  # Import the json module to handle JSON parsing
+import threading
+import tkinter as tk
+from tkinter import messagebox, scrolledtext, filedialog, ttk
+from PIL import Image, ImageTk  # For handling image display in Tkinter
+import cv2  # For video processing (opencv-python-headless)
+import numpy as np
+
+# Theme definitions
+THEMES = {
+    'Light': {'bg': '#FFFFFF', 'fg': '#000000', 'btn_bg': '#E0E0E0', 'text_area': '#F5F5F5'},
+    'Dark': {'bg': '#212121', 'fg': '#FFFFFF', 'btn_bg': '#424242', 'text_area': '#373737'},
+    'Blue': {'bg': '#B0E0E6', 'fg': '#00008B', 'btn_bg': '#ADD8E6', 'text_area': '#AEEEEE'},
+    # Add more themes as needed
+}
+
+# Default theme
+current_theme = THEMES['Light']
+
+def apply_theme(theme_name):
+    global current_theme
+    current_theme = THEMES[theme_name]
+    
+    # Apply background and foreground colors
+    root.configure(bg=current_theme['bg'])
+    conversation_text.configure(bg=current_theme['text_area'], fg=current_theme['fg'], insertbackground=current_theme['fg'], highlightbackground=current_theme['fg'])
+    text_entry.configure(bg=current_theme['text_area'], fg=current_theme['fg'], insertbackground=current_theme['fg'], highlightbackground=current_theme['fg'])
+    system_role_entry.configure(bg=current_theme['text_area'], fg=current_theme['fg'], insertbackground=current_theme['fg'], highlightbackground=current_theme['fg'])
+    
+    # Apply button background color
+    for button in [load_file_button, set_avatar_button, send_button, start_button, exit_button]:
+        button.configure(bg=current_theme['btn_bg'], fg=current_theme['fg'])
+
+    # Apply status label foreground and background color
+    status_label.configure(fg=current_theme['fg'], bg=current_theme['bg'])
+
+# Configuration settings
+WHISPER_MODEL = "models/ggml-base.en.bin"
+PIPER_MODEL = "en_US-lessac-medium.onnx"
+PIPER_CONFIG = "en_US-lessac-medium.onnx.json"
+LLM_URL = "http://127.0.0.1:1234/v1/chat/completions"
+
+def record_audio():
+    update_status("Recording audio...")
+    # Record audio from the microphone and save to input.wav
+    chunk = 1024  # Record in chunks of 1024 samples
+    sample_format = pyaudio.paInt16  # 16 bits per sample
+    channels = 1
+    fs = 16000  # Sampling frequency (Hz)
+    seconds = 5  # Duration of recording
+
+    silence_threshold = 1000  # Threshold for silence detection (adjust this value as needed)
+    max_silence_duration = 2 * fs // chunk  # Maximum number of silent chunks before stopping (adjust this duration)
+
+    p = pyaudio.PyAudio()  # Create an interface to PortAudio
+
+    stream = p.open(format=sample_format,
+                    channels=channels,
+                    rate=fs,
+                    frames_per_buffer=chunk,
+                    input=True)
+
+    frames = []  # Initialize array to store frames
+    silent_chunks_count = 0  # Counter for consecutive silent chunks
+
+    while True:
+        data = np.frombuffer(stream.read(chunk), dtype=np.int16)
+        
+        # Check if the chunk is silence
+        if np.abs(data).mean() < silence_threshold:
+            silent_chunks_count += 1
+            if silent_chunks_count >= max_silence_duration:
+                break  # Stop recording if we've had enough silence
+        else:
+            silent_chunks_count = 0
+
+        frames.append(data.tobytes())
+
+    # Stop and close the stream
+    stream.stop_stream()
+    stream.close()
+
+    # Terminate the PortAudio interface
+    p.terminate()
+
+    # Save the recorded data as a WAV file
+    wf = wave.open("input.wav", 'wb')
+    wf.setnchannels(channels)
+    wf.setsampwidth(p.get_sample_size(sample_format))
+    wf.setframerate(fs)
+    wf.writeframes(b''.join(frames))
+    wf.close()
+    update_status("Audio recording completed.")
+
+def transcribe_audio():
+    # Transcribe the recorded audio using whisper-cli
+    cmd = f"whisper-cli -m {WHISPER_MODEL} -f input.wav"
+    output = os.popen(cmd).read().strip()
+    return output
+
+def get_llm_response(prompt, system_role):
+    update_status("Waiting for LLM response...")
+    # Send the prompt to the locally hosted LLM and get a plain text response
+    headers = {"Content-Type": "application/json"}
+    data = {
+        "model": "<your-model-here>",
+        "messages": [
+            {"role": "system", "content": system_role},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": -1,
+        "stream": False
+    }
+
+    response = requests.post(LLM_URL, headers=headers, json=data)
+    
+    # Parse the JSON response to extract the 'content' field
+    response_json = response.json()
+    llm_response_content = response_json['choices'][0]['message']['content']
+    
+    update_status("LLM response received.")
+    return llm_response_content
+
+def synthesize_speech(text):
+    update_status("Synthesizing speech...")
+    # Use piper TTS to convert text to speech and save as welcome.wav
+    cmd = f"./piper --model {PIPER_MODEL} --config {PIPER_CONFIG} --output_file welcome.wav"
+    process = Popen(cmd, stdin=PIPE)
+    process.communicate(input=text.encode())
+    process.wait()  # Ensure the process completes before moving on
+    update_status("Speech synthesis completed.")
+
+def play_audio(file_name="welcome.wav"):
+    update_status("Playing audio...")
+    # Play the generated audio file using pyaudio
+    chunk = 1024  # Record in chunks of 1024 samples
+
+    wf = wave.open(file_name, 'rb')
+
+    p = pyaudio.PyAudio()  # Create an interface to PortAudio
+
+    stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                    channels=wf.getnchannels(),
+                    rate=wf.getframerate(),
+                    output=True)
+
+    data = wf.readframes(chunk)
+
+    while data:
+        stream.write(data)
+        data = wf.readframes(chunk)
+
+    # Stop and close the stream
+    stream.stop_stream()
+    stream.close()
+
+    # Terminate the PortAudio interface
+    p.terminate()
+    update_status("Audio playback completed.")
+
+def handle_input():
+    user_input = text_entry.get().strip()
+    system_role = system_role_entry.get().strip()  # Get the system role from its entry field
+    if user_input.lower() in ["exit", "quit"]:
+        print("Exiting chatbot. Goodbye!")
+        root.destroy()
+        return
+
+    conversation_text.insert(tk.END, f"You: {user_input}\n")
+    conversation_text.yview(tk.END)  # Scroll to the end of the text widget
+    root.update_idletasks()  # Allow the GUI to update
+
+    # Get a response from the LLM
+    llm_response = get_llm_response(user_input, system_role).strip()
+    
+    conversation_text.insert(tk.END, f"Chatbot: {llm_response}\n")
+    conversation_text.yview(tk.END)  # Scroll to the end of the text widget
+    root.update_idletasks()  # Allow the GUI to update
+
+    # Synthesize the LLM's response into speech and play it
+    synthesize_speech(llm_response)
+    play_audio()
+
+    # Clear the entry field for the next input
+    text_entry.delete(0, tk.END)
+
+def start_chat():
+    threading.Thread(target=chat_loop).start()
+
+def chat_loop():
+    while True:
+        # Record and transcribe the user's speech
+        record_audio()
+        transcription = transcribe_audio().strip()
+
+        root.update_idletasks()  # Allow the GUI to update
+
+        if "exit" in transcription.lower() or "quit" in transcription.lower():
+            print("Exiting chatbot. Goodbye!")
+            break
+
+        conversation_text.insert(tk.END, f"You: {transcription}\n")
+        conversation_text.yview(tk.END)  # Scroll to the end of the text widget
+        root.update_idletasks()  # Allow the GUI to update
+
+        # Get a response from the LLM
+        system_role = system_role_entry.get().strip()  # Get the system role from its entry field
+        llm_response = get_llm_response(transcription, system_role).strip()
+        
+        conversation_text.insert(tk.END, f"Chatbot: {llm_response}\n")
+        conversation_text.yview(tk.END)  # Scroll to the end of the text widget
+        root.update_idletasks()  # Allow the GUI to update
+
+        # Synthesize the LLM's response into speech and play it
+        synthesize_speech(llm_response)
+        play_audio()
+
+        root.update_idletasks()  # Allow the GUI to update
+
+def exit_chat():
+    if messagebox.askokcancel("Exit", "Do you want to exit?"):
+        root.destroy()
+
+# Function to browse and load a text file into the text entry field
+def load_text_file():
+    file_path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
+    if file_path:
+        with open(file_path, 'r') as file:
+            content = file.read()
+            system_role_entry.delete(0, tk.END)
+            system_role_entry.insert(tk.END, content)
+
+def update_status(message):
+    status_label.config(text=message)
+
+def update_avatar(file_path):
+    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+        # It's an image
+        img = Image.open(file_path)
+        img.thumbnail((200, 200))  # Resize to fit the label (optional)
+        photo_img = ImageTk.PhotoImage(img)
+        
+        avatar_label.config(image=photo_img)
+        avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
+    elif file_path.lower().endswith(('.mpg', '.avi', '.mkv')):
+        # It's a video
+        cap = cv2.VideoCapture(file_path)
+        
+        def update_video_frame():
+            ret, frame = cap.read()
+            if not ret:
+                cap.release()
+                return
+            
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+            img = Image.fromarray(frame).resize((200, 200))  # Resize to fit the label (optional)
+            photo_img = ImageTk.PhotoImage(img)
+            
+            avatar_label.config(image=photo_img)
+            avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
+            
+            root.after(30, update_video_frame)  # Schedule next frame update
+        
+        update_video_frame()
+    else:
+        messagebox.showerror("Error", "Unsupported file format. Please use an image or video.")
+
+def set_avatar():
+    file_path = filedialog.askopenfilename(filetypes=[("Image and Video files", "*.png *.jpg *.jpeg *.bmp *.gif *.mpg *.avi *.mkv")])
+    if file_path:
+        update_avatar(file_path)
+
+# Setup the main window for the chatbot
+root = tk.Tk()
+root.title("Chatbot")
+
+# Create a frame for the left pane (image and conversation)
+left_pane = tk.Frame(root, bg=current_theme['bg'])
+left_pane.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# Create a label to display the avatar in the left pane
+avatar_label = tk.Label(left_pane)
+avatar_label.pack(pady=(10, 20))
+
+# Create a scrolled text widget for conversation display in the left pane
+conversation_text = scrolledtext.ScrolledText(left_pane, wrap=tk.WORD, width=60, height=15)
+conversation_text.pack(padx=20, pady=20)
+
+# Create a frame for the right pane (controls)
+right_pane = tk.Frame(root, bg=current_theme['bg'])
+right_pane.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+# Create a variable to hold the selected theme name
+theme_var = tk.StringVar(root)
+theme_var.set('Light')  # Set default value
+
+# Function to change theme
+def change_theme(*args):
+    apply_theme(theme_var.get())
+
+# Create and place the dropdown menu in the right pane
+theme_menu = ttk.OptionMenu(right_pane, theme_var, *THEMES.keys(), command=change_theme)
+theme_menu.pack(pady=(10, 5))  # Add some padding at the top and bottom
+
+# Create a status label to show the current operation in the right pane
+status_label = tk.Label(right_pane, text="", fg="blue")
+status_label.pack(pady=(0, 10))  # Add some padding
+
+# Create a frame for the system role prompt and load file button
+system_role_frame = tk.Frame(right_pane)
+system_role_frame.pack(pady=5)  # Add some vertical padding
+
+# Create a label above the system role entry field
+system_role_label = tk.Label(system_role_frame, text="System Role Prompt:")
+system_role_label.pack(side=tk.LEFT, pady=(5, 5))  # Adjusted padding
+
+# Create an entry widget for the system role prompt
+system_role_entry = tk.Entry(system_role_frame, width=50)
+system_role_entry.insert(tk.END, "Always answer in rhymes.")  # Default system role
+system_role_entry.pack(side=tk.LEFT, pady=5)
+
+# Create a load file button to select a text file and pack it into the new frame
+load_file_button = tk.Button(system_role_frame, text="Load Text File", command=load_text_file)
+load_file_button.pack(side=tk.LEFT, fill=tk.X, padx=(0, 5), pady=(0, 5))  # Add horizontal padding between buttons
+
+# Create a set avatar button and pack it into the right pane
+set_avatar_button = tk.Button(right_pane, text="Set Avatar", command=set_avatar)
+set_avatar_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
+
+# Create a start button and pack it into the right pane
+start_button = tk.Button(right_pane, text="Start Chat", command=start_chat)
+start_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
+
+# Create a label above the text entry field
+type_message_label = tk.Label(right_pane, text="Type Message:")
+type_message_label.pack(pady=(10, 5))
+
+# Create an entry widget for text input in the right pane and move it to the bottom
+text_entry = tk.Entry(right_pane, width=75)
+text_entry.insert(tk.END, "")  # Default text can be left empty or set as needed
+text_entry.pack(pady=10)
+
+# Bind the Enter key to the handle_input function
+text_entry.bind("<Return>", lambda event: handle_input())
+
+# Create a send button to submit the text input and pack it into the right pane
+send_button = tk.Button(right_pane, text="Send", command=handle_input)
+send_button.pack(fill=tk.X, padx=0, pady=(0, 0))  # Place Send button at the bottom
+
+# Create an exit button and pack it into the right pane under the send button
+exit_button = tk.Button(right_pane, text="Exit", command=exit_chat)
+exit_button.pack(fill=tk.X, padx=0, pady=(0, 0))  # Add padding only on the right side for the last button
+
+# Apply the default theme on startup
+apply_theme(theme_var.get())
+
+# Run the GUI application
+root.mainloop()
