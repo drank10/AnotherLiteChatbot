@@ -11,6 +11,8 @@ from PIL import Image, ImageTk  # For handling image display in Tkinter
 import cv2  # For video processing (opencv-python-headless)
 import numpy as np
 import queue
+from flask import Flask, send_file, render_template_string
+import shutil
 
 # Theme definitions
 THEMES = {
@@ -55,8 +57,6 @@ def apply_theme(theme_name):
     
     # Update system_role_frame background
     system_role_frame.config(bg=current_theme['bg'])
-
-
 
 # Configuration settings
 WHISPER_MODEL = "models/ggml-base.en.bin"
@@ -304,18 +304,37 @@ def load_text_file():
 def update_status(message):
     status_label.config(text=message)
 
+# Function to update the avatar
 def update_avatar(file_path):
-    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-        # It's an image
+    global avatar_path
+    
+    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+        # It's an image, convert to PNG
         img = Image.open(file_path)
         img.thumbnail((200, 200))  # Resize to fit the label (optional)
+        avatar_path = "static/avatar.png"
+        img.save(avatar_path)
+        
+        photo_img = ImageTk.PhotoImage(img)
+        
+        avatar_label.config(image=photo_img)
+        avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
+    elif file_path.lower().endswith('.gif'):
+        # It's an animated GIF, serve as-is
+        shutil.copy(file_path, "static/avatar.gif")
+        avatar_path = "static/avatar.gif"
+        
+        img = Image.open(avatar_path)
         photo_img = ImageTk.PhotoImage(img)
         
         avatar_label.config(image=photo_img)
         avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
     elif file_path.lower().endswith(('.mpg', '.avi', '.mkv')):
-        # It's a video
-        cap = cv2.VideoCapture(file_path)
+        # It's a video, handle as-is
+        shutil.copy(file_path, "static/avatar.mp4")  # Use .mp4 for consistency in the label
+        avatar_path = "static/avatar.mp4"
+        
+        cap = cv2.VideoCapture(avatar_path)
         
         def update_video_frame():
             ret, frame = cap.read()
@@ -335,6 +354,9 @@ def update_avatar(file_path):
         update_video_frame()
     else:
         messagebox.showerror("Error", "Unsupported file format. Please use an image or video.")
+
+    if avatar_path:
+        status_label.config(text=f"Avatar set: {avatar_path}")
 
 def set_avatar():
     file_path = filedialog.askopenfilename(filetypes=[("Image and Video files", "*.png *.jpg *.jpeg *.bmp *.gif *.mpg *.avi *.mkv")])
@@ -374,8 +396,8 @@ def change_theme(*args):
     apply_theme(theme_var.get())
 
 # Create and place the dropdown menu in the right pane
-#theme_menu = ttk.OptionMenu(right_pane, theme_var, *THEMES.keys(), command=change_theme)
-#theme_menu.pack(pady=(10, 5))  # Add some padding at the top and bottom
+theme_menu = ttk.OptionMenu(right_pane, theme_var, *THEMES.keys(), command=change_theme)
+theme_menu.pack(pady=(10, 5))  # Add some padding at the top and bottom
 
 # Create a status label to show the current operation in the right pane
 status_label = tk.Label(right_pane, text="", fg="blue")
@@ -433,6 +455,37 @@ regenerate_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
 exit_button = tk.Button(buttons_frame, text="Exit", command=exit_chat)
 exit_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+# Initialize Flask app and route to serve the avatar
+from flask import Flask, send_file
+
+app = Flask(__name__, static_folder='static')
+
+# Flask route to serve the avatar
+@app.route('/avatar')
+def avatar():
+    if avatar_path:
+        # Determine the MIME type based on file extension
+        _, ext = os.path.splitext(avatar_path)
+        mime_type_map = {
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.mp4': 'video/mp4'
+        }
+        mime_type = mime_type_map.get(ext.lower(), 'application/octet-stream')
+        
+        return send_file(avatar_path, mimetype=mime_type)
+    else:
+        return "Avatar not set", 404
+
+# Start Flask app in a separate thread
+import threading
+def run_flask_app():
+    app.run(host='127.0.0.1', port=5000)
+
+flask_thread = threading.Thread(target=run_flask_app)
+flask_thread.daemon = True  # Daemonize the thread to ensure it exits with the program
+flask_thread.start()
 
 # Apply the default theme on startup
 apply_theme(theme_var.get())
