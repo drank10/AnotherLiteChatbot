@@ -1,10 +1,10 @@
 <img src="AnotherLiteChatbot.jpg">
 
 ## Overview
-This is a Light AI chatbot interface designed to handle various text-to-speech (TTS) functionalities and image generation based on user interactions. It uses the Piper TTS engine and Whisper.cpp. The LLM can be hosted using LM Studio or Ollama
+This is a light AI chatbot interface. It uses the Piper TTS engine and Whisper.cpp. The LLM can be hosted using LM Studio or Ollama
 
 ## Features
-- **Fast response time:** Real-Time full speech without having to hit record or play
+- **Fast response time:** Real-Time speech without having to hit record or play
 - **Avatar in image or video format**
 
 ## Requirements
@@ -16,7 +16,7 @@ This is a Light AI chatbot interface designed to handle various text-to-speech (
 
 ## Installation
 
-1. Clone the repository:
+1. Create Python environment and then clone the repository:
    ```bash
    git clone https://github.com/drank10/AnotherLiteChatbot.git
    cd AnotherLiteChatbot
