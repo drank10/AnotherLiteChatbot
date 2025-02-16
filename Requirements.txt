@@ -5,4 +5,4 @@ requests
 opencv-python-headless
 numpy
 Pillow
-Flask
+flask
