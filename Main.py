@@ -10,10 +10,11 @@ from tkinter import messagebox, scrolledtext, filedialog, ttk
 from PIL import Image, ImageTk  # For handling image display in Tkinter
 import cv2  # For video processing (opencv-python-headless)
 import numpy as np
+import queue
 
 # Theme definitions
 THEMES = {
-    'Light': {'bg': '#FFFFFF', 'fg': '#000000', 'btn_bg': '#E0E0E0', 'text_area': '#F5F5F5'},
+    'Light': {'bg': '#FFFFFF', 'fg': '#000000', 'btn_bg': '#E0E0E0', 'text_area': '#FFFFFF'},
     'Dark': {'bg': '#212121', 'fg': '#FFFFFF', 'btn_bg': '#424242', 'text_area': '#373737'},
     'Blue': {'bg': '#B0E0E6', 'fg': '#00008B', 'btn_bg': '#ADD8E6', 'text_area': '#AEEEEE'},
     # Add more themes as needed
@@ -21,6 +22,12 @@ THEMES = {
 
 # Default theme
 current_theme = THEMES['Light']
+
+# Queue for communicating between threads
+response_queue = queue.Queue()
+
+# Variable to hold the current AI response thread
+current_ai_thread = None
 
 def apply_theme(theme_name):
     global current_theme
@@ -33,11 +40,23 @@ def apply_theme(theme_name):
     system_role_entry.configure(bg=current_theme['text_area'], fg=current_theme['fg'], insertbackground=current_theme['fg'], highlightbackground=current_theme['fg'])
     
     # Apply button background color
-    for button in [load_file_button, set_avatar_button, send_button, start_button, exit_button]:
+    for button in [load_file_button, set_avatar_button, send_button, start_button, exit_button, stop_button, regenerate_button]:
         button.configure(bg=current_theme['btn_bg'], fg=current_theme['fg'])
-
+    
     # Apply status label foreground and background color
     status_label.configure(fg=current_theme['fg'], bg=current_theme['bg'])
+    
+    # Update avatar label background
+    avatar_label.config(bg=current_theme['bg'])
+    
+    # Update labels' background colors
+    system_role_label.config(bg=current_theme['bg'])
+    type_message_label.config(bg=current_theme['bg'])
+    
+    # Update system_role_frame background
+    system_role_frame.config(bg=current_theme['bg'])
+
+
 
 # Configuration settings
 WHISPER_MODEL = "models/ggml-base.en.bin"
@@ -165,8 +184,15 @@ def play_audio(file_name="welcome.wav"):
     update_status("Audio playback completed.")
 
 def handle_input():
+    global current_ai_thread
+    
+    # Stop any ongoing AI response generation
+    if current_ai_thread is not None and current_ai_thread.is_alive():
+        current_ai_thread.join(timeout=0)
+    
     user_input = text_entry.get().strip()
     system_role = system_role_entry.get().strip()  # Get the system role from its entry field
+    
     if user_input.lower() in ["exit", "quit"]:
         print("Exiting chatbot. Goodbye!")
         root.destroy()
@@ -175,9 +201,13 @@ def handle_input():
     conversation_text.insert(tk.END, f"You: {user_input}\n")
     conversation_text.yview(tk.END)  # Scroll to the end of the text widget
     root.update_idletasks()  # Allow the GUI to update
+    
+    # Get a response from the LLM in a separate thread
+    current_ai_thread = threading.Thread(target=get_and_display_llm_response, args=(user_input, system_role))
+    current_ai_thread.start()
 
-    # Get a response from the LLM
-    llm_response = get_llm_response(user_input, system_role).strip()
+def get_and_display_llm_response(prompt, system_role):
+    llm_response = get_llm_response(prompt, system_role).strip()
     
     conversation_text.insert(tk.END, f"Chatbot: {llm_response}\n")
     conversation_text.yview(tk.END)  # Scroll to the end of the text widget
@@ -189,6 +219,41 @@ def handle_input():
 
     # Clear the entry field for the next input
     text_entry.delete(0, tk.END)
+
+def stop_ai_response():
+    global current_ai_thread
+    
+    if current_ai_thread is not None and current_ai_thread.is_alive():
+        current_ai_thread.join(timeout=0)  # Forcefully terminate the thread (not recommended for all use cases)
+    
+    conversation_text.insert(tk.END, "AI response generation stopped.\n")
+    conversation_text.yview(tk.END)  # Scroll to the end of the text widget
+
+def regenerate_last_response():
+    global current_ai_thread
+    
+    if current_ai_thread is not None and current_ai_thread.is_alive():
+        current_ai_thread.join(timeout=0)
+    
+    # Extract the last user input from the conversation text
+    lines = conversation_text.get("1.0", tk.END).splitlines()
+    last_user_input = ""
+    for line in reversed(lines):
+        if line.startswith("You: "):
+            last_user_input = line[5:]  # Remove "You: "
+            break
+    
+    system_role = system_role_entry.get().strip()  # Get the system role from its entry field
+    
+    if not last_user_input:
+        conversation_text.insert(tk.END, "No previous user input found to regenerate response.\n")
+        conversation_text.yview(tk.END)  # Scroll to the end of the text widget
+        return
+
+    # Generate and display the AI response in a separate thread
+    current_ai_thread = threading.Thread(target=get_and_display_llm_response, args=(last_user_input, system_role))
+    current_ai_thread.start()
+
 
 def start_chat():
     threading.Thread(target=chat_loop).start()
@@ -284,13 +349,17 @@ root.title("Chatbot")
 left_pane = tk.Frame(root, bg=current_theme['bg'])
 left_pane.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-# Create a label to display the avatar in the left pane
+# Use grid instead of pack for avatar_label and conversation_text
 avatar_label = tk.Label(left_pane)
-avatar_label.pack(pady=(10, 20))
+avatar_label.grid(row=0, column=0, pady=(10, 20), sticky="nsew")
 
-# Create a scrolled text widget for conversation display in the left pane
 conversation_text = scrolledtext.ScrolledText(left_pane, wrap=tk.WORD, width=60, height=15)
-conversation_text.pack(padx=20, pady=20)
+conversation_text.grid(row=1, column=0, padx=0, pady=0, sticky="nsew")
+
+# Configure grid rows and columns to expand properly
+left_pane.grid_rowconfigure(0, weight=1)
+left_pane.grid_rowconfigure(1, weight=1)
+left_pane.grid_columnconfigure(0, weight=1)
 
 # Create a frame for the right pane (controls)
 right_pane = tk.Frame(root, bg=current_theme['bg'])
@@ -305,19 +374,19 @@ def change_theme(*args):
     apply_theme(theme_var.get())
 
 # Create and place the dropdown menu in the right pane
-theme_menu = ttk.OptionMenu(right_pane, theme_var, *THEMES.keys(), command=change_theme)
-theme_menu.pack(pady=(10, 5))  # Add some padding at the top and bottom
+#theme_menu = ttk.OptionMenu(right_pane, theme_var, *THEMES.keys(), command=change_theme)
+#theme_menu.pack(pady=(10, 5))  # Add some padding at the top and bottom
 
 # Create a status label to show the current operation in the right pane
 status_label = tk.Label(right_pane, text="", fg="blue")
 status_label.pack(pady=(0, 10))  # Add some padding
 
-# Create a frame for the system role prompt and load file button
-system_role_frame = tk.Frame(right_pane)
+system_role_frame = tk.Frame(right_pane, bg='white')
 system_role_frame.pack(pady=5)  # Add some vertical padding
 
-# Create a label above the system role entry field
-system_role_label = tk.Label(system_role_frame, text="System Role Prompt:")
+
+# Create a label above the system role entry field with white background
+system_role_label = tk.Label(system_role_frame, text="System Role Prompt:", bg='white')
 system_role_label.pack(side=tk.LEFT, pady=(5, 5))  # Adjusted padding
 
 # Create an entry widget for the system role prompt
@@ -337,8 +406,8 @@ set_avatar_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
 start_button = tk.Button(right_pane, text="Start Chat", command=start_chat)
 start_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
 
-# Create a label above the text entry field
-type_message_label = tk.Label(right_pane, text="Type Message:")
+# Create a label above the text entry field with white background
+type_message_label = tk.Label(right_pane, text="Type Message:", bg='white')
 type_message_label.pack(pady=(10, 5))
 
 # Create an entry widget for text input in the right pane and move it to the bottom
@@ -349,13 +418,21 @@ text_entry.pack(pady=10)
 # Bind the Enter key to the handle_input function
 text_entry.bind("<Return>", lambda event: handle_input())
 
-# Create a send button to submit the text input and pack it into the right pane
-send_button = tk.Button(right_pane, text="Send", command=handle_input)
-send_button.pack(fill=tk.X, padx=0, pady=(0, 0))  # Place Send button at the bottom
+# Create a new frame to hold the buttons in one row
+buttons_frame = tk.Frame(right_pane, bg=current_theme['bg'])
+buttons_frame.pack(side=tk.TOP, fill=tk.X)  # Pack at the bottom
 
-# Create an exit button and pack it into the right pane under the send button
-exit_button = tk.Button(right_pane, text="Exit", command=exit_chat)
-exit_button.pack(fill=tk.X, padx=0, pady=(0, 0))  # Add padding only on the right side for the last button
+send_button = tk.Button(buttons_frame, text="Send", command=handle_input)
+send_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+stop_button = tk.Button(buttons_frame, text="Stop AI Response", command=stop_ai_response)
+stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+regenerate_button = tk.Button(buttons_frame, text="Regenerate Last Response", command=regenerate_last_response)
+regenerate_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+exit_button = tk.Button(buttons_frame, text="Exit", command=exit_chat)
+exit_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
 # Apply the default theme on startup
 apply_theme(theme_var.get())
