@@ -42,7 +42,7 @@ This is a light AI chatbot interface. It uses the Piper TTS engine and Whisper.c
    
 ## Customization
 - You can modify the TTS voice models, system prompts, and other settings through the interface or by editing the source code.
-- Different models of STT (Whisper Tiny), LLM can be used to adjust performance and used VRAM.
+- Different models of STT (Whisper Tiny), TTS voice quality and LLM size can be used to adjust performance and used VRAM.
 - Avatar GIF\Video can be reached at http://127.0.0.1:5000/avatar. Set to 0.0.0.0 and configure firewall if needed to display on other machines. 
 
 ## Contributing
