@@ -38,7 +38,8 @@ This is a light AI chatbot interface. It uses the Piper TTS engine and Whisper.c
 
 1. **Set a system prompt:** Manually enter system prompt for character profile or select from file 
 2. **Start Chatting:** Press the Start button to start chatting or enter a text message
-3. **Stop Chatting** Say Exit to quit program
+3. **Set Avatar** to an image, animated GIF or video file
+4. **Stop Chatting** Say Exit to quit program
    
 ## Customization
 - You can modify the TTS voice models, system prompts, and other settings through the interface or by editing the source code.
