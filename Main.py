@@ -31,6 +31,9 @@ response_queue = queue.Queue()
 # Variable to hold the current AI response thread
 current_ai_thread = None
 
+# Variable to track if the chatbot is talking
+is_talking = False
+
 def apply_theme(theme_name):
     global current_theme
     current_theme = THEMES[theme_name]
@@ -42,7 +45,7 @@ def apply_theme(theme_name):
     system_role_entry.configure(bg=current_theme['text_area'], fg=current_theme['fg'], insertbackground=current_theme['fg'], highlightbackground=current_theme['fg'])
     
     # Apply button background color
-    for button in [load_file_button, set_avatar_button, send_button, start_button, exit_button, stop_button, regenerate_button]:
+    for button in [load_file_button, set_idle_avatar_button, set_talking_avatar_button, send_button, start_button, exit_button, stop_button, regenerate_button]:
         button.configure(bg=current_theme['btn_bg'], fg=current_theme['fg'])
     
     # Apply status label foreground and background color
@@ -63,6 +66,10 @@ WHISPER_MODEL = "models/ggml-base.en.bin"
 PIPER_MODEL = "en_US-lessac-medium.onnx"
 PIPER_CONFIG = "en_US-lessac-medium.onnx.json"
 LLM_URL = "http://127.0.0.1:1234/v1/chat/completions"
+
+# Variables to hold the paths for idle and talking avatars
+idle_avatar_path = "static/idle.png"
+talking_avatar_path = "static/talking.png"
 
 def record_audio():
     update_status("Recording audio...")
@@ -156,8 +163,13 @@ def synthesize_speech(text):
     update_status("Speech synthesis completed.")
 
 def play_audio(file_name="welcome.wav"):
+    global is_talking
     update_status("Playing audio...")
-    # Play the generated audio file using pyaudio
+    
+    # Set the chatbot as talking
+    is_talking = True
+    
+    # Use pyaudio to play the generated audio file
     chunk = 1024  # Record in chunks of 1024 samples
 
     wf = wave.open(file_name, 'rb')
@@ -170,6 +182,11 @@ def play_audio(file_name="welcome.wav"):
                     output=True)
 
     data = wf.readframes(chunk)
+    
+    # Update the avatar image to the talking avatar
+    talking_img = ImageTk.PhotoImage(Image.open(talking_avatar_path))
+    avatar_label.config(image=talking_img)
+    avatar_label.image = talking_img  # Keep a reference to avoid garbage collection
 
     while data:
         stream.write(data)
@@ -182,6 +199,14 @@ def play_audio(file_name="welcome.wav"):
     # Terminate the PortAudio interface
     p.terminate()
     update_status("Audio playback completed.")
+
+    # Update the avatar image back to the idle avatar
+    idle_img = ImageTk.PhotoImage(Image.open(idle_avatar_path))
+    avatar_label.config(image=idle_img)
+    avatar_label.image = idle_img  # Keep a reference to avoid garbage collection
+    
+    # Set the chatbot as not talking
+    is_talking = False
 
 def handle_input():
     global current_ai_thread
@@ -229,6 +254,11 @@ def stop_ai_response():
     conversation_text.insert(tk.END, "AI response generation stopped.\n")
     conversation_text.yview(tk.END)  # Scroll to the end of the text widget
 
+    # Update the avatar image back to the idle avatar
+    idle_img = ImageTk.PhotoImage(Image.open(idle_avatar_path))
+    avatar_label.config(image=idle_img)
+    avatar_label.image = idle_img  # Keep a reference to avoid garbage collection
+
 def regenerate_last_response():
     global current_ai_thread
     
@@ -253,7 +283,6 @@ def regenerate_last_response():
     # Generate and display the AI response in a separate thread
     current_ai_thread = threading.Thread(target=get_and_display_llm_response, args=(last_user_input, system_role))
     current_ai_thread.start()
-
 
 def start_chat():
     threading.Thread(target=chat_loop).start()
@@ -304,64 +333,34 @@ def load_text_file():
 def update_status(message):
     status_label.config(text=message)
 
-# Function to update the avatar
-def update_avatar(file_path):
-    global avatar_path
+def update_avatar(file_path, avatar_type):
+    global idle_avatar_path, talking_avatar_path
     
-    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-        # It's an image, convert to PNG
-        img = Image.open(file_path)
-        img.thumbnail((200, 200))  # Resize to fit the label (optional)
-        avatar_path = "static/avatar.png"
-        img.save(avatar_path)
-        
-        photo_img = ImageTk.PhotoImage(img)
-        
-        avatar_label.config(image=photo_img)
-        avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
-    elif file_path.lower().endswith('.gif'):
-        # It's an animated GIF, serve as-is
-        shutil.copy(file_path, "static/avatar.gif")
-        avatar_path = "static/avatar.gif"
-        
-        img = Image.open(avatar_path)
-        photo_img = ImageTk.PhotoImage(img)
-        
-        avatar_label.config(image=photo_img)
-        avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
-    elif file_path.lower().endswith(('.mpg', '.avi', '.mkv')):
-        # It's a video, handle as-is
-        shutil.copy(file_path, "static/avatar.mp4")  # Use .mp4 for consistency in the label
-        avatar_path = "static/avatar.mp4"
-        
-        cap = cv2.VideoCapture(avatar_path)
-        
-        def update_video_frame():
-            ret, frame = cap.read()
-            if not ret:
-                cap.release()
-                return
+    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+        # It's an image, save as is
+        if avatar_type == 'idle':
+            idle_avatar_path = "static/idle.gif" if file_path.lower().endswith('.gif') else "static/idle.png"
+        else:
+            talking_avatar_path = "static/talking.gif" if file_path.lower().endswith('.gif') else "static/talking.png"
             
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
-            img = Image.fromarray(frame).resize((200, 200))  # Resize to fit the label (optional)
-            photo_img = ImageTk.PhotoImage(img)
-            
+        shutil.copy(file_path, idle_avatar_path if avatar_type == 'idle' else talking_avatar_path)
+        
+        photo_img = ImageTk.PhotoImage(Image.open(idle_avatar_path if avatar_type == 'idle' else talking_avatar_path))
+        
+        if avatar_type == 'idle':
             avatar_label.config(image=photo_img)
             avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
-            
-            root.after(30, update_video_frame)  # Schedule next frame update
-        
-        update_video_frame()
+        else:
+            avatar_label.config(image=photo_img)
+            avatar_label.image = photo_img  # Keep a reference to avoid garbage collection
     else:
-        messagebox.showerror("Error", "Unsupported file format. Please use an image or video.")
+        messagebox.showerror("Error", "Unsupported file format. Please use an image.")
 
-    if avatar_path:
-        status_label.config(text=f"Avatar set: {avatar_path}")
 
-def set_avatar():
-    file_path = filedialog.askopenfilename(filetypes=[("Image and Video files", "*.png *.jpg *.jpeg *.bmp *.gif *.mpg *.avi *.mkv")])
+def set_avatar(avatar_type):
+    file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif")])
     if file_path:
-        update_avatar(file_path)
+        update_avatar(file_path, avatar_type)
 
 # Setup the main window for the chatbot
 root = tk.Tk()
@@ -372,7 +371,8 @@ left_pane = tk.Frame(root, bg=current_theme['bg'])
 left_pane.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
 # Use grid instead of pack for avatar_label and conversation_text
-avatar_label = tk.Label(left_pane)
+avatar_img = ImageTk.PhotoImage(Image.open(idle_avatar_path))
+avatar_label = tk.Label(left_pane, image=avatar_img)
 avatar_label.grid(row=0, column=0, pady=(10, 20), sticky="nsew")
 
 conversation_text = scrolledtext.ScrolledText(left_pane, wrap=tk.WORD, width=60, height=15)
@@ -420,9 +420,13 @@ system_role_entry.pack(side=tk.LEFT, pady=5)
 load_file_button = tk.Button(system_role_frame, text="Load Text File", command=load_text_file)
 load_file_button.pack(side=tk.LEFT, fill=tk.X, padx=(0, 5), pady=(0, 5))  # Add horizontal padding between buttons
 
-# Create a set avatar button and pack it into the right pane
-set_avatar_button = tk.Button(right_pane, text="Set Avatar", command=set_avatar)
-set_avatar_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
+# Create a button to set the idle avatar image
+set_idle_avatar_button = tk.Button(right_pane, text="Set Idle Avatar", command=lambda: set_avatar('idle'))
+set_idle_avatar_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
+
+# Create a button to set the talking avatar image
+set_talking_avatar_button = tk.Button(right_pane, text="Set Talking Avatar", command=lambda: set_avatar('talking'))
+set_talking_avatar_button.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
 
 # Create a start button and pack it into the right pane
 start_button = tk.Button(right_pane, text="Start Chat", command=start_chat)
@@ -461,22 +465,68 @@ from flask import Flask, send_file
 
 app = Flask(__name__, static_folder='static')
 
+# HTML template with JavaScript to refresh the avatar image
+html_template = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot Avatar</title>
+    <style>
+        #avatar {
+            max-width: 200px;
+            max-height: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Chatbot Avatar</h1>
+    <img id="avatar" src="/avatar" alt="Chatbot Avatar">
+   <script>
+    // Function to refresh the avatar image
+    function refreshAvatar() {
+        const img = document.getElementById('avatar');
+        // Update the source of the image with a cache-busting query parameter
+        img.src = '/avatar?' + new Date().getTime();
+    }
+
+    // Refresh the avatar every 5 seconds (or adjust as needed)
+    setInterval(refreshAvatar, 5000);
+</script>
+
+</body>
+</html>
+"""
+
+# Flask route to serve the HTML template
+@app.route('/')
+def index():
+    return render_template_string(html_template)
+
 # Flask route to serve the avatar
 @app.route('/avatar')
 def avatar():
+    global talking_avatar_path, idle_avatar_path
+    
+    # Determine which avatar image to serve based on whether the chatbot is talking or not
+    avatar_path = talking_avatar_path if is_talking else idle_avatar_path
+
     if avatar_path:
-        # Determine the MIME type based on file extension
         _, ext = os.path.splitext(avatar_path)
         mime_type_map = {
             '.png': 'image/png',
             '.gif': 'image/gif',
-            '.mp4': 'video/mp4'
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.bmp': 'image/bmp'
         }
         mime_type = mime_type_map.get(ext.lower(), 'application/octet-stream')
         
         return send_file(avatar_path, mimetype=mime_type)
     else:
         return "Avatar not set", 404
+
 
 # Start Flask app in a separate thread
 import threading
