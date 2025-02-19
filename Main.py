@@ -11,7 +11,7 @@ from PIL import Image, ImageTk  # For handling image display in Tkinter
 import cv2  # For video processing (opencv-python-headless)
 import numpy as np
 import queue
-from flask import Flask, send_file, render_template_string
+from flask import Flask, send_file, render_template_string, make_response
 import shutil
 
 # Theme definitions
@@ -63,13 +63,13 @@ def apply_theme(theme_name):
 
 # Configuration settings
 WHISPER_MODEL = "models/ggml-base.en.bin"
-PIPER_MODEL = "en_US-lessac-medium.onnx"
-PIPER_CONFIG = "en_US-lessac-medium.onnx.json"
+PIPER_MODEL = "en_US-kristin-medium.onnx"
+PIPER_CONFIG = "en_US-kristin-medium.onnx.json"
 LLM_URL = "http://127.0.0.1:1234/v1/chat/completions"
 
 # Variables to hold the paths for idle and talking avatars
 idle_avatar_path = "static/idle.png"
-talking_avatar_path = "static/talking.png"
+talking_avatar_path = "static/talking.gif"
 
 def record_audio():
     update_status("Recording audio...")
@@ -164,10 +164,8 @@ def synthesize_speech(text):
 
 def play_audio(file_name="welcome.wav"):
     global is_talking
-    update_status("Playing audio...")
     
-    # Set the chatbot as talking
-    is_talking = True
+    update_status("Playing audio...")
     
     # Use pyaudio to play the generated audio file
     chunk = 1024  # Record in chunks of 1024 samples
@@ -183,11 +181,6 @@ def play_audio(file_name="welcome.wav"):
 
     data = wf.readframes(chunk)
     
-    # Update the avatar image to the talking avatar
-    talking_img = ImageTk.PhotoImage(Image.open(talking_avatar_path))
-    avatar_label.config(image=talking_img)
-    avatar_label.image = talking_img  # Keep a reference to avoid garbage collection
-
     while data:
         stream.write(data)
         data = wf.readframes(chunk)
@@ -232,6 +225,17 @@ def handle_input():
     current_ai_thread.start()
 
 def get_and_display_llm_response(prompt, system_role):
+    global talking_img  # Declare this as a global variable if not already
+
+    # Update the avatar image to the talking avatar before making the request
+    talking_img = ImageTk.PhotoImage(Image.open(talking_avatar_path))
+    avatar_label.config(image=talking_img)
+    avatar_label.image = talking_img  # Keep a reference to avoid garbage collection
+
+    # Set is_talking to True to indicate the chatbot is talking
+    global is_talking
+    is_talking = True
+    
     llm_response = get_llm_response(prompt, system_role).strip()
     
     conversation_text.insert(tk.END, f"Chatbot: {llm_response}\n")
@@ -481,20 +485,26 @@ html_template = """
     </style>
 </head>
 <body>
-    <h1>Chatbot Avatar</h1>
-    <img id="avatar" src="/avatar" alt="Chatbot Avatar">
-   <script>
-    // Function to refresh the avatar image
-    function refreshAvatar() {
-        const img = document.getElementById('avatar');
-        // Update the source of the image with a cache-busting query parameter
-        img.src = '/avatar?' + new Date().getTime();
-    }
+    
+    <img id="avatar" src="/avatar?rand=<?=rand(1,1000);?" alt="Chatbot Avatar">
+    <script>
+        // Function to refresh the avatar image
+        function refreshAvatar() {
+            const img = document.getElementById('avatar');
+            fetch('/avatar?' + new Date().getTime())
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    img.src = url;
+                    // Revoke the object URL to free up memory
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);  // Adjust timeout as needed
+                })
+                .catch(error => console.error('Error fetching avatar:', error));
+        }
 
-    // Refresh the avatar every 5 seconds (or adjust as needed)
-    setInterval(refreshAvatar, 5000);
-</script>
-
+        // Refresh the avatar every 5 seconds (or adjust as needed)
+        setInterval(refreshAvatar, 2000);  // Change interval to 1 second for faster testing
+    </script>
 </body>
 </html>
 """
@@ -512,26 +522,17 @@ def avatar():
     # Determine which avatar image to serve based on whether the chatbot is talking or not
     avatar_path = talking_avatar_path if is_talking else idle_avatar_path
 
-    if avatar_path:
-        _, ext = os.path.splitext(avatar_path)
-        mime_type_map = {
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.bmp': 'image/bmp'
-        }
-        mime_type = mime_type_map.get(ext.lower(), 'application/octet-stream')
-        
-        return send_file(avatar_path, mimetype=mime_type)
-    else:
-        return "Avatar not set", 404
-
+    response = make_response(send_file(avatar_path))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    return response
 
 # Start Flask app in a separate thread
 import threading
 def run_flask_app():
-    app.run(host='127.0.0.1', port=5000)
+    app.run(host='0.0.0.0', port=5000)
 
 flask_thread = threading.Thread(target=run_flask_app)
 flask_thread.daemon = True  # Daemonize the thread to ensure it exits with the program
