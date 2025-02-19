@@ -5,7 +5,7 @@ This is a light AI chatbot interface. It uses the Piper TTS engine and Whisper.c
 
 ## Features
 - **Fast response time:** Real-Time speech without having to hit record or play
-- **Avatar in image or video format**
+- **Avatar in image or GIF format**
 - **Avatar is output to a webserver** 
 
 
@@ -38,7 +38,7 @@ This is a light AI chatbot interface. It uses the Piper TTS engine and Whisper.c
 
 1. **Set a system prompt:** Manually enter system prompt for character profile or select from file 
 2. **Start Chatting:** Press the Start button to start chatting or enter a text message
-3. **Set Avatar** to an image, animated GIF or video file
+3. **Set Avatar** to an image or animated GIF
 4. **Stop Chatting** Say Exit to quit program
    
 ## Customization
